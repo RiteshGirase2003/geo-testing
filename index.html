@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>GPS Tracker</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+<style>
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+}
+
+#controls {
+    padding: 12px;
+    background: #111;
+    color: white;
+}
+
+button {
+    padding: 10px 16px;
+    margin-right: 10px;
+    cursor: pointer;
+}
+
+#stats {
+    margin-top: 10px;
+    line-height: 1.8;
+}
+
+#map {
+    height: 70vh;
+}
+</style>
+</head>
+
+<body>
+
+<div id="controls">
+    <button id="startBtn">Start</button>
+    <button id="stopBtn">Stop</button>
+
+    <div id="stats">
+        <div>Latitude: <span id="lat">-</span></div>
+        <div>Longitude: <span id="lng">-</span></div>
+        <div>Accuracy: <span id="accuracy">-</span> m</div>
+        <div>Speed: <span id="speed">0</span> km/h</div>
+        <div>Distance: <span id="distance">0</span> km</div>
+    </div>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+const map = L.map("map").setView([20, 78], 5);
+
+/* ✅ FASTER + MORE STABLE TILE SERVER */
+// L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+//     maxZoom: 19,
+//     attribution: "&copy; OpenStreetMap & CARTO"
+// }).addTo(map);
+
+L.tileLayer("https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "&copy; OpenStreetMap contributors"
+}).addTo(map);
+
+let watchId = null;
+let marker = null;
+
+let points = [];
+let totalDistance = 0;
+let lastValidPoint = null;
+let firstFixSkipped = false;
+
+const polyline = L.polyline([], {
+    color: "blue",
+    weight: 4
+}).addTo(map);
+
+/* Haversine formula */
+function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = d => d * Math.PI / 180;
+
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+
+    const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) *
+        Math.cos(toRad(lat2)) *
+        Math.sin(dLon / 2) ** 2;
+
+    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
+function updateLocation(position) {
+
+    const lat = position.coords.latitude;
+    const lng = position.coords.longitude;
+    const accuracy = position.coords.accuracy;
+
+    /* ✅ IGNORE FIRST BAD GPS FIX */
+    if (!firstFixSkipped) {
+        firstFixSkipped = true;
+        return;
+    }
+
+    document.getElementById("lat").textContent = lat.toFixed(6);
+    document.getElementById("lng").textContent = lng.toFixed(6);
+    document.getElementById("accuracy").textContent = accuracy.toFixed(1);
+
+    /* SPEED */
+    let speedKmh = 0;
+    if (position.coords.speed != null && position.coords.speed > 0) {
+        speedKmh = position.coords.speed * 3.6;
+    }
+    document.getElementById("speed").textContent = speedKmh.toFixed(1);
+
+    const currentPoint = { lat, lng, time: position.timestamp };
+
+    /* DISTANCE CALCULATION */
+    if (lastValidPoint) {
+        const dist = haversine(
+            lastValidPoint.lat,
+            lastValidPoint.lng,
+            lat,
+            lng
+        );
+
+        /* filter GPS jumps */
+        if (dist > 0 && dist < 300) {
+            totalDistance += dist;
+        }
+    }
+
+    lastValidPoint = currentPoint;
+    points.push(currentPoint);
+
+    document.getElementById("distance").textContent =
+        (totalDistance / 1000).toFixed(3);
+
+    /* MAP UPDATE */
+    polyline.addLatLng([lat, lng]);
+
+    if (!marker) {
+        marker = L.marker([lat, lng]).addTo(map);
+        map.setView([lat, lng], 18);
+    } else {
+        marker.setLatLng([lat, lng]);
+    }
+}
+
+function showError(error) {
+    console.log(error);
+
+    if (error.code === 1) {
+        alert("Permission denied. Enable location.");
+    } else if (error.code === 2) {
+        alert("Position unavailable.");
+    } else if (error.code === 3) {
+        alert("Timeout - move outdoors or wait for GPS fix.");
+    }
+}
+
+/* START */
+document.getElementById("startBtn").addEventListener("click", () => {
+
+    if (!navigator.geolocation) {
+        alert("Geolocation not supported");
+        return;
+    }
+
+    /* reset session */
+    if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+    }
+
+    points = [];
+    totalDistance = 0;
+    lastValidPoint = null;
+    firstFixSkipped = false;
+    polyline.setLatLngs([]);
+
+    watchId = navigator.geolocation.watchPosition(
+        updateLocation,
+        showError,
+        {
+            enableHighAccuracy: true,
+            maximumAge: 1000,
+            timeout: 60000
+        }
+    );
+});
+
+/* STOP */
+document.getElementById("stopBtn").addEventListener("click", () => {
+    if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+    }
+});
+</script>
+
+</body>
+</html>
